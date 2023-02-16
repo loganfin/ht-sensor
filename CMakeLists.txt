@@ -25,7 +25,7 @@ else()
     endif()
 endif()
 
-project(mssd LANGUAGES C CXX ASM)
+project(ht_sensor LANGUAGES C CXX ASM)
 
 pico_sdk_init()
 
