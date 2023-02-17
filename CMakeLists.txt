@@ -6,10 +6,10 @@ set(CMAKE_CXX_STANDARD 11)
 set(PICO_BOARD adafruit_feather_rp2040)
 
 # check for valid pico-sdk installation
-if(DEFINED ENV{PICO_SDK_PATH})
+if(DEFINED PICO_SDK_PATH)
     if(NOT EXISTS ${CMAKE_SOURCE_DIR}/pico_sdk_import.cmake)
-        message("Copying $ENV{PICO_SDK_PATH}/external/pico_sdk_import.cmake to ${CMAKE_SOURCE_DIR}")
-        file(COPY $ENV{PICO_SDK_PATH}/external/pico_sdk_import.cmake
+        message("Copying ${PICO_SDK_PATH}/external/pico_sdk_import.cmake to ${CMAKE_SOURCE_DIR}")
+        file(COPY ${PICO_SDK_PATH}/external/pico_sdk_import.cmake
             DESTINATION ${CMAKE_SOURCE_DIR})
     endif()
     include(pico_sdk_import.cmake)
@@ -42,6 +42,8 @@ if(NOT DEFINED PICO_SDK_FREERTOS_SOURCE)
         "or run\n"
         "   git -C lib/FreeRTOS-Kernel submodule update --init")
     endif()
+    message(STATUS "Found FreeRTOS-Kernel at ${PICO_SDK_FREERTOS_SOURCE}")
+else()
     message(STATUS "Found FreeRTOS-Kernel at ${PICO_SDK_FREERTOS_SOURCE}")
 endif()
 
