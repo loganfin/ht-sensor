@@ -1,12 +1,3 @@
-/* Set configuration register
- * Read and return configuration register
- * Read and return Manufacturing ID
- * Read and return Unique Serial Number
- * Read and return temperature in C
- * Read and return temperature in F
- * Read and return humidity
- */
-
 #include <FreeRTOS.h>
 #include <task.h>
 #include <stdio.h>
@@ -20,132 +11,104 @@
 #define I2C_SCL     3
 #define I2C_SDA     2
 
-#define HDC_ADDRESS         0x40    // 100 0000 (7 bit address)
-#define HDC_TEMP_REG        0x00
-#define HDC_HUMID_REG       0x01
-#define HDC_CONF_REG        0x02
-#define HDC_SN_ONE_REG      0xFB
-#define HDC_SN_TWO_REG      0xFC
-#define HDC_SN_THREE_REG    0xFD
-#define HDC_MAN_ID_REG      0xFE
+// had to use const uint8_t to use the ReadRegister function
+const uint8_t hdc_address       = 0x40;
+const uint8_t hdc_temp_reg      = 0x00;
+const uint8_t hdc_humid_reg     = 0x01;
+const uint8_t hdc_config_reg    = 0x02;
+const uint8_t hdc_man_id_reg    = 0xFE;
+const uint8_t hdc_sn_reg_arr[3] = {
+    0xFB,
+    0xFC,
+    0xFD
+};
 
-void SetConfigVal(uint16_t configuration);
-uint16_t ReadConfig();
-uint16_t ReadManID();
-uint64_t ReadSN();      // Serial number is a 5 byte value
-uint16_t ReadTemp();
-float ReadHum();
+void SetConfig(uint16_t configVal);
+uint64_t ReadRegister(const uint8_t* regAddrVec, const uint8_t vecSize, const uint8_t numBytes);
 float TempToC();
 float TempToF();
+float HumidToPercent();
+
+void vPrintTask();
 
 int main()
 {
     stdio_init_all();
-
     i2c_init(I2C_BLOCK, 100 * 1000);
     gpio_set_function(I2C_SDA, GPIO_FUNC_I2C);
     gpio_set_function(I2C_SCL, GPIO_FUNC_I2C);
     gpio_pull_up(I2C_SDA);     // i2c is line idle high, active low, so voltage needs to be pulled up high at the start
     gpio_pull_up(I2C_SCL);
-    SetConfigVal(0x9000);
-    sleep_ms(1000);
+
+    xTaskCreate(vPrintTask, "PrintTask", 256, NULL, 2, NULL);
+    vTaskStartScheduler();
+
+    while (true);
+}
+
+/* BEGIN RTOS TASKS */
+
+void vPrintTask()
+{
+    SetConfig(0x1500);
 
     while (true) {
-        printf("Config Register: 0x%04X\n", ReadConfig());
-        printf("Manufacturer's ID: 0x%04X\n", ReadManID());
-        printf("Serial Number: 0x%010llX\n", ReadSN());
+        printf("Configuration Register: 0x%04X\n", (uint16_t)ReadRegister(&hdc_config_reg, 1, 2));
+        printf("Serial Number: 0x%012llX\n", ReadRegister(hdc_sn_reg_arr, 3, 6));
+        printf("Manufacturer ID: 0x%04X\n", (uint16_t)ReadRegister(&hdc_man_id_reg, 1, 2));
         printf("Current Temperature (C): %f\n", TempToC());
         printf("Current Temperature (F): %f\n", TempToF());
-        printf("Current Humidity (\%): %f\n", ReadHum());
+        printf("Current Humidity (\%): %f\n", HumidToPercent());
         printf("\n");
-        sleep_ms(1000);
+        vTaskDelay(10 * configTICK_RATE_HZ);
     }
 }
 
-void SetConfigVal(uint16_t configuration)
+/* END RTOS TASKS */
+
+/* BEGIN HDC HELPER FUNCTIONS */
+void SetConfig(uint16_t configVal)
 {
-    // 0001 0101 0000 0000
-    // 0x1500
-    uint8_t data[3] = {0x02, 0x15, 0x00} ;
-    i2c_write_blocking(I2C_BLOCK, HDC_ADDRESS, data, 3, false);
-    sleep_ms(20);
+    uint8_t data[3] = {
+        hdc_config_reg,                     // the address of the configuration and status register
+        (uint8_t)((configVal >> 8) & 0xff), // extract the first byte from config value
+        (uint8_t)(configVal & 0xff)         // extract the second byte from config value
+    };
+
+    // send the data block to the HDC1080
+    i2c_write_blocking(I2C_BLOCK, hdc_address, data, 3, false);
+    return;
 }
 
-uint16_t ReadConfig()
+uint64_t ReadRegister(const uint8_t* regAddrVec, const uint8_t vecSize, const uint8_t numBytes)
 {
-    uint8_t byte[2];
-    uint8_t confReg = HDC_CONF_REG;
-    uint16_t confVal = 0;
+    uint8_t data[numBytes];
+    uint64_t returnValue = 0;
+    uint64_t temp;
 
-    i2c_write_blocking(I2C_BLOCK, HDC_ADDRESS, &confReg, 1, false);
-    sleep_ms(10);
-    i2c_read_blocking(I2C_BLOCK, HDC_ADDRESS, byte, 2, false);
-    confVal = byte[0] << 8 | byte[1];
-    return confVal;
-}
+    if (numBytes > 8) {
+        return -1;
+    }
 
-uint16_t ReadManID()
-{
-    uint8_t byte[2];
-    uint8_t manIdReg = HDC_MAN_ID_REG;
-    uint16_t manId = 0;
+    for (int i = 0; i < vecSize; i++) {
+        i2c_write_blocking(I2C_BLOCK, hdc_address, &regAddrVec[i], 1, false);
+        vTaskDelay(1);
+        i2c_read_blocking(I2C_BLOCK, hdc_address, &data[i*2], numBytes, false);
+    }
 
-    // read the data from the manufacturer id register
-    i2c_write_blocking(I2C_BLOCK, HDC_ADDRESS, &manIdReg, 1, false);
-    sleep_ms(10);
-    i2c_read_blocking(I2C_BLOCK, HDC_ADDRESS, byte, 2, false);
+    returnValue = data[0];
+    for (int i = 0; i < numBytes-1; i++) {
+        returnValue <<= 8;
+        returnValue |= data[i+1];
+    }
 
-    // combine the two distinct bytes
-    manId = byte[0] << 8 | byte[1];
-    return manId;
-}
-
-uint64_t ReadSN()
-{
-    uint8_t byte[5];
-    uint8_t serialNumOneReg     = HDC_SN_ONE_REG;
-    uint8_t serialNumTwoReg     = HDC_SN_TWO_REG;
-    uint8_t serialNumThreeReg   = HDC_SN_THREE_REG;
-    uint64_t serialNumVal       = 0;
-
-    // read the first 2 bytes
-    i2c_write_blocking(I2C_BLOCK, HDC_ADDRESS, &serialNumOneReg, 1, false);
-    sleep_ms(10);
-    i2c_read_blocking(I2C_BLOCK, HDC_ADDRESS, byte, 2, false);
-
-    // read the second 2 bytes
-    i2c_write_blocking(I2C_BLOCK, HDC_ADDRESS, &serialNumTwoReg, 1, false);
-    sleep_ms(10);
-    i2c_read_blocking(I2C_BLOCK, HDC_ADDRESS, &byte[2], 2, false);
-
-    // read the last byte
-    i2c_write_blocking(I2C_BLOCK, HDC_ADDRESS, &serialNumThreeReg, 1, false);
-    sleep_ms(10);
-    i2c_read_blocking(I2C_BLOCK, HDC_ADDRESS, &byte[4], 1, false);
-
-    // combine all bytes into one 5 byte hex number
-    serialNumVal = ((((byte[0] << 8 | byte[1]) << 8 | byte[2]) << 8 | byte[3]) << 8 | byte[4]);
-    return serialNumVal;
-}
-
-uint16_t ReadTemp()
-{
-    uint8_t byte[2];
-    uint8_t tempReg = HDC_TEMP_REG;
-    uint16_t rawTemp = 0;
-
-    i2c_write_blocking(I2C_BLOCK, HDC_ADDRESS, &tempReg, 1, false);
-    sleep_ms(10);
-    i2c_read_blocking(I2C_BLOCK, HDC_ADDRESS, byte, 2, false);
-    rawTemp = byte[0] << 8 | byte[1];
-    return rawTemp;
+    return returnValue;
 }
 
 float TempToC()
 {
-    uint16_t rawTemp = ReadTemp();
-    float tempC = 0;
-    tempC = ((float)rawTemp / 65536) * 165 - 40;
+    uint16_t rawTemp = ReadRegister(&hdc_temp_reg, 1, 2);
+    float tempC = ((float)rawTemp / 65536) * 165 - 40;
     return tempC;
 }
 
@@ -156,17 +119,11 @@ float TempToF()
     return tempF;
 }
 
-float ReadHum()
+float HumidToPercent()
 {
-    uint8_t byte[2];
-    uint8_t humidReg = HDC_HUMID_REG;
-    uint16_t rawHumid = 0;
-    float percentHumidity;
-
-    i2c_write_blocking(I2C_BLOCK, HDC_ADDRESS, &humidReg, 1, false);
-    sleep_ms(10);
-    i2c_read_blocking(I2C_BLOCK, HDC_ADDRESS, byte, 2, false);
-    rawHumid = byte[0] << 8 | byte[1];
-    percentHumidity = ((float)rawHumid / 65536) * 100;
-    return percentHumidity;
+    uint16_t rawHumid = ReadRegister(&hdc_humid_reg, 1, 2);
+    float percentHumid = ((float)rawHumid / 65536) * 100;
+    return percentHumid;
 }
+
+/* END HDC HELPER FUNCTIONS */
