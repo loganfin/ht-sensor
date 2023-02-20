@@ -67,9 +67,13 @@ target_include_directories(freertos PUBLIC
 add_executable(${CMAKE_PROJECT_NAME} src/main.c)
 
 pico_enable_stdio_usb(${CMAKE_PROJECT_NAME} 1)
-pico_enable_stdio_uart(${CMAKE_PROJECT_NAME} 1)
-
-target_link_libraries(${CMAKE_PROJECT_NAME} pico_stdlib freertos)
-
+pico_enable_stdio_uart(${CMAKE_PROJECT_NAME} 0)
 pico_add_extra_outputs(${CMAKE_PROJECT_NAME})
 
+target_link_libraries(${CMAKE_PROJECT_NAME}
+    pico_stdlib
+    hardware_gpio
+    hardware_i2c
+    hardware_adc
+    freertos
+    )
